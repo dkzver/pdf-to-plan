@@ -1,0 +1,6 @@
+out/
+__pycache__/
+*.pyc
+fixtures/*_plan/
+fixtures/*.png
+bench/cases/

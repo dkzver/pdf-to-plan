@@ -41,6 +41,18 @@ python tools/pdfplan/make_viewer.py <каталог>    # план + стран�
 
 ## Публикация
 
+Репозиторий: https://github.com/dkzver/pdf-to-plan (private). Деплой на Render:
+Dashboard → **New +** → **Blueprint** → выбрать репозиторий (Render попросит доступ
+к приватному репо через GitHub App) → **Apply**. `render.yaml` в корне задаёт Docker,
+контекст `tools/pdfplan` и переменную `PORT`.
+
+Вручную: **New +** → **Web Service** → Docker → Root Directory `tools/pdfplan`,
+Dockerfile Path `Dockerfile`, Health Check `/`.
+
+Ограничения бесплатного плана: 512 МБ памяти и засыпание через 15 минут простоя
+(первый запрос после сна — 30–60 с). Разбор A3 в 300 dpi пиково ест 300–400 МБ,
+поэтому при падении по памяти переключайте на Starter (2 ГБ).
+
 Две разные вещи, не путать:
 
 1. **Просмотрщик — статика.** `viewer.html` самодостаточен: внутри JSON и картинка,
