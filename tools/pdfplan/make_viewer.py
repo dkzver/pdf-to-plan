@@ -12,12 +12,13 @@ HERE = Path(__file__).resolve().parent
 def build_viewer(plan_dir: Path, out: Path) -> Path:
     plan_path = plan_dir / "plan.json"
     scheme_path = plan_dir / "scheme.png"
-    page_path = scheme_path if scheme_path.exists() else plan_dir / "page.png"
+    page_path = plan_dir / "page.png"
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    page_b64 = base64.b64encode(page_path.read_bytes()).decode()
     template = (HERE / "viewer_template.html").read_text(encoding="utf-8")
-    html = template.replace("__DATA__", json.dumps({"plan": plan, "page": page_b64},
-                                                   ensure_ascii=False))
+    scheme_b64 = base64.b64encode(scheme_path.read_bytes()).decode() if scheme_path.exists() else ""
+    page_b64 = base64.b64encode(page_path.read_bytes()).decode() if page_path.exists() else scheme_b64
+    html = template.replace("__DATA__", json.dumps(
+        {"plan": plan, "page": page_b64, "scheme": scheme_b64}, ensure_ascii=False))
     out.write_text(html, encoding="utf-8")
     return out
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-PX = 3.0
+PX = 2.0
 INK = (28, 27, 28)
 WALL = (150, 156, 164)
 BG = (255, 255, 255)

@@ -468,7 +468,7 @@ def raster_walls(page: fitz.Page, dpi: int = 300) -> list[Wall]:
     return _walls_from_binary(bw, scale)
 
 
-def layer_walls(page: fitz.Page, px_per_pt: float = 3.0) -> tuple[list[Wall], list[dict]]:
+def layer_walls(page: fitz.Page, px_per_pt: float = 2.0) -> tuple[list[Wall], list[dict]]:
     """Только стены: перерисовываем полигоны слоя стен в растр и снимаем оси со скелета.
 
     Так обрабатываются L-образные и диагональные стены, которые не сводятся
@@ -822,6 +822,45 @@ def detect_balcony(page: fitz.Page, walls: list[Wall], mm_per_pt: float = 17.639
     return out
 
 
+def split_at_junctions(walls: list[Wall], tol: float = 6.0) -> list[Wall]:
+    """Режет стену в местах, где в неё упирается или пересекает другая — создаёт узлы."""
+    out: list[Wall] = []
+    for w in walls:
+        ux, uy = _axis(w.angle)
+        nx, ny = -uy, ux
+        length = w.length
+        base_x, base_y = w.a
+        cuts = [0.0, length]
+
+        for v in walls:
+            if v is w:
+                continue
+            for p in (v.a, v.b):
+                t = (p[0] - base_x) * ux + (p[1] - base_y) * uy
+                d = abs((p[0] - base_x) * nx + (p[1] - base_y) * ny)
+                if tol < t < length - tol and d <= max(tol, w.thickness / 2 + 2):
+                    cuts.append(t)
+            # пересечение осей (крест) — если стены перпендикулярны
+            if 30 < abs(v.angle - w.angle) < 150:
+                vx, vy = _axis(v.angle)
+                den = ux * vy - uy * vx
+                if abs(den) > 1e-6:
+                    dx, dy = v.a[0] - base_x, v.a[1] - base_y
+                    t = (dx * vy - dy * vx) / den
+                    s = (dx * uy - dy * ux) / den
+                    if tol < t < length - tol and tol < s < v.length - tol:
+                        cuts.append(t)
+
+        cuts = sorted(set(round(c, 2) for c in cuts))
+        for t1, t2 in zip(cuts, cuts[1:]):
+            if t2 - t1 < 1.0:
+                continue
+            a = (base_x + ux * t1, base_y + uy * t1)
+            b = (base_x + ux * t2, base_y + uy * t2)
+            out.append(Wall(a, b, w.thickness, w.confidence, w.source))
+    return out
+
+
 def drop_hatch(walls: list[Wall], max_thickness: float = 2.2,
                angle_tol: float = 3.0, spacing: float = 5.0) -> list[Wall]:
     """Убирает штриховку: тонкие линии с 2+ параллельными соседями в 5 pt.
@@ -895,6 +934,7 @@ def build(pdf_path: str | Path, page_no: int = 0, force: str | None = None,
         walls = orthogonalize(walls)
         walls = axis_snap(walls, tol=max(8.0, med))
         walls = close_corners(walls, tol=max(12.0, med * 1.5))
+        walls = split_at_junctions(walls, tol=max(6.0, med * 0.6))
         walls = dedupe(walls)
         try:
             windows = detect_windows(page, walls)

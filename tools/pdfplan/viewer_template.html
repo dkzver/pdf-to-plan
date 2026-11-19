@@ -37,6 +37,7 @@
   <button id="undo">Отменить</button>
   <button id="recalc">Пересчитать комнаты</button>
   <button id="fit">Вписать</button>
+  <button id="base">Подложка</button>
   <button id="save" class="primary">Скачать JSON</button>
   <a id="again" href="/" style="display:none;padding:4px 10px;border:1px solid #8e8b8e;border-radius:4px;color:inherit;text-decoration:none">Другой PDF</a>
   <span id="hint">тяни концы, клик по стене — выбрать, <kbd>Del</kbd> — удалить</span>
@@ -93,12 +94,19 @@ const state = {
 };
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-const img = new Image();
+const imgScheme = new Image();
+const imgPage = new Image();
+const img = imgScheme;
 let view = { scale: 1, ox: 0, oy: 0 };
 const SNAP_PX = 10;
+state.base = DATA.scheme ? 'scheme' : 'page';
 
-img.onload = () => { fit(); render(); scheduleRecalc(); };
-img.src = 'data:image/png;base64,' + DATA.page;
+imgScheme.onload = () => { fit(); render(); scheduleRecalc(); };
+imgPage.onload = () => {
+  if (state.base === 'page') { fit(); render(); }
+};
+imgScheme.src = 'data:image/png;base64,' + (DATA.scheme || DATA.page);
+imgPage.src = 'data:image/png;base64,' + DATA.page;
 document.getElementById('src').textContent = DATA.plan.source_name || DATA.plan.file.split(/[\\/]/).pop();
 if (location.protocol === 'http:' || location.protocol === 'https:') {
   document.getElementById('again').style.display = 'inline-block';
@@ -123,11 +131,17 @@ const toPlan = (x, y) => [(x - view.ox) / view.scale, (y - view.oy) / view.scale
 function render() {
   const rect = canvas.getBoundingClientRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
-  if (img.complete) {
+  const drawImg = (im, alpha) => {
+    if (!im.complete) return;
     const w = DATA.plan.page_size.width * view.scale;
     const h = DATA.plan.page_size.height * view.scale;
-    ctx.drawImage(img, view.ox, view.oy, w, h);
-  }
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(im, view.ox, view.oy, w, h);
+    ctx.globalAlpha = 1;
+  };
+  if (state.base === 'page') drawImg(imgPage, 1);
+  else if (state.base === 'overlay') { drawImg(imgPage, 1); drawImg(imgScheme, 0.45); }
+  else drawImg(imgScheme, 1);
   // проёмы
   for (const o of state.openings) {
     const a = toScreen(o.a), b = toScreen(o.b);
@@ -217,6 +231,40 @@ function updateWallPanel() {
   const thkInput = document.getElementById('wthk');
   if (document.activeElement !== lenInput) lenInput.value = Math.round(len(w) * (MM_PER_PT || 1));
   if (document.activeElement !== thkInput) thkInput.value = Math.round(w.thickness * (MM_PER_PT || 1));
+}
+
+function nearestWallBody(p, skipWall) {
+  let best = null;
+  for (const t of state.walls) {
+    if (t === skipWall) continue;
+    const q = nearestOnSeg(p, t);
+    const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+    if (d <= Math.max(3, t.thickness / 2 + 3) && (!best || d < best.d)) best = { q, d, wall: t };
+  }
+  return best;
+}
+
+function trySplitAtNode(drag) {
+  // если конец стены лёг на тело другой стены — режем её и делаем общий узел
+  const w = drag.wall;
+  if (!w) return;
+  const p = w[drag.end];
+  for (let i = 0; i < state.walls.length; i++) {
+    const t = state.walls[i];
+    if (t === w) continue;
+    const q = nearestOnSeg(p, t);
+    const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+    if (d > t.thickness / 2 + 4) continue;
+    const dA = Math.hypot(q[0] - t.a[0], q[1] - t.a[1]);
+    const dB = Math.hypot(q[0] - t.b[0], q[1] - t.b[1]);
+    if (dA < 3 || dB < 3) { w[drag.end] = [...q]; return; }
+    const kind = t.kind;
+    state.walls.splice(i, 1,
+      { a: [...t.a], b: [...q], thickness: t.thickness, kind, confidence: t.confidence, source: 'split' },
+      { a: [...q], b: [...t.b], thickness: t.thickness, kind, confidence: t.confidence, source: 'split' });
+    w[drag.end] = [...q];
+    return;
+  }
 }
 
 function nearestOnSeg(p, w) {
@@ -399,7 +447,7 @@ canvas.addEventListener('mousedown', e => {
     state.selected = hit.i;
     if (hit.end) {
       push();
-      state.dragging = { i: hit.i, end: hit.end };
+      state.dragging = { i: hit.i, end: hit.end, wall: state.walls[hit.i] };
     }
     render();
   } else {
@@ -431,6 +479,8 @@ canvas.addEventListener('mousemove', e => {
     if (Math.abs(p[0] - other[0]) < tol) p = [other[0], p[1]];
     if (Math.abs(p[1] - other[1]) < tol) p = [p[0], other[1]];
     p = [snapGrid(p[0]), snapGrid(p[1])];
+    const near = nearestWallBody(p, w);
+    if (near) p = [near.q[0], near.q[1]];
     w[state.dragging.end] = p;
     render();
   } else if (state.adding) {
@@ -443,7 +493,7 @@ window.addEventListener('mouseup', () => {
   state.dragging = null;
   if (state.panning) { state.panning = null; }
   canvas.style.cursor = 'crosshair';
-  if (moved) scheduleRecalc();
+  if (moved) { trySplitAtNode(moved); scheduleRecalc(); }
 });
 
 canvas.addEventListener('dblclick', e => {
@@ -524,6 +574,12 @@ canvas.addEventListener('wheel', e => {
 }, { passive: false });
 
 document.getElementById('fit').onclick = () => { fit(); render(); };
+document.getElementById('base').onclick = () => {
+  state.base = state.base === 'scheme' ? 'overlay' : state.base === 'overlay' ? 'page' : 'scheme';
+  document.getElementById('base').textContent =
+    state.base === 'scheme' ? 'Подложка' : state.base === 'overlay' ? 'Совмещение' : 'Только лист';
+  render();
+};
 
 document.getElementById('add').onclick = () => {
   const rect = canvas.getBoundingClientRect();
@@ -560,7 +616,7 @@ window.addEventListener('keydown', e => {
 });
 
 // для проверки из браузера
-window.__viewer = { state, view, render, countJoints, recalc, computeRooms };
+window.__viewer = { state, get view() { return view; }, render, countJoints, recalc, computeRooms };
 </script>
 </body>
 </html>

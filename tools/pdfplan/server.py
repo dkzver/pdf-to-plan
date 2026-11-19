@@ -40,6 +40,8 @@ def _process(data: bytes, filename: str) -> str:
 
     try:
         result, walls, page = P.build(pdf_path, 0)
+    except MemoryError as exc:
+        raise HTTPException(413, "Не хватило памяти на разбор. Попробуйте файл меньшего размера или тариф с 2 ГБ") from exc
     except Exception as exc:  # noqa: BLE001 — показываем причину пользователю
         raise HTTPException(422, f"Не удалось разобрать: {exc}") from exc
     result["source_name"] = filename
