@@ -2,7 +2,7 @@ services:
   - type: web
     name: pdfplan
     runtime: docker
-    plan: starter
+    plan: free
     dockerContext: ./tools/pdfplan
     dockerfilePath: ./Dockerfile
     healthCheckPath: /
