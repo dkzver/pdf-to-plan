@@ -1,0 +1,13 @@
+.git
+.zwork
+.agents
+refs
+replica
+docs
+node_modules
+__pycache__
+*.pyc
+tools/pdfplan/out
+tools/pdfplan/bench/cases
+tools/pdfplan/fixtures/*_plan
+tools/pdfplan/fixtures/*.png

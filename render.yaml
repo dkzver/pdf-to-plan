@@ -3,8 +3,8 @@ services:
     name: pdfplan
     runtime: docker
     plan: free
-    dockerContext: ./tools/pdfplan
-    dockerfilePath: ./tools/pdfplan/Dockerfile
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
     healthCheckPath: /
     envVars:
       - key: PORT
