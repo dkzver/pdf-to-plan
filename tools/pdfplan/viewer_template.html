@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Проверка схемы — правка стен</title>
+<style>
+  :root { --bg:#f2f0f1; --line:#1c1b1c; --accent:#2b66b3; --danger:#b3261e; --ok:#1f7a4d; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:13px/18px Inter, "Segoe UI", system-ui, sans-serif; color:var(--line); background:var(--bg); }
+  header { display:flex; gap:12px; align-items:center; padding:8px 12px; background:#fff; border-bottom:1px solid #d0cdcf; }
+  header b { font-weight:600; }
+  button { font:inherit; padding:4px 10px; border:1px solid #8e8b8e; border-radius:4px; background:#fff; cursor:pointer; }
+  button:hover { background:#e9e7e8; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #hint { margin-left:auto; color:#5f5c5e; }
+  main { position:absolute; inset:41px 0 0 0; display:flex; }
+  #stage { flex:1; position:relative; overflow:hidden; background:#fff; }
+  canvas { display:block; width:100%; height:100%; cursor:crosshair; }
+  aside { width:260px; border-left:1px solid #d0cdcf; background:#fff; padding:10px 12px; overflow:auto; }
+  aside h3 { margin:0 0 6px; font-size:13px; }
+  .row { display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f0eef0; }
+  .muted { color:#5f5c5e; }
+  .seg { display:flex; gap:4px; margin-bottom:8px; }
+  .seg button { flex:1; padding:4px 6px; border:1px solid #8e8b8e; background:#fff; border-radius:4px; cursor:pointer; }
+  .seg button.on { background:#2b66b3; border-color:#2b66b3; color:#fff; }
+  .row input { font:inherit; padding:2px 4px; }
+  #wall-panel .row { border-bottom:0; padding:4px 0; align-items:center; }
+  kbd { font:11px ui-monospace, monospace; border:1px solid #d0cdcf; border-bottom-width:2px; border-radius:3px; padding:0 4px; background:#faf8f9; }
+</style>
+</head>
+<body>
+<header>
+  <b>Схема из PDF</b>
+  <span id="src" class="muted"></span>
+  <button id="add">Стена</button>
+  <button id="del">Удалить</button>
+  <button id="undo">Отменить</button>
+  <button id="recalc">Пересчитать комнаты</button>
+  <button id="fit">Вписать</button>
+  <button id="save" class="primary">Скачать JSON</button>
+  <a id="again" href="/" style="display:none;padding:4px 10px;border:1px solid #8e8b8e;border-radius:4px;color:inherit;text-decoration:none">Другой PDF</a>
+  <span id="hint">тяни концы, клик по стене — выбрать, <kbd>Del</kbd> — удалить</span>
+</header>
+<main>
+  <div id="stage"><canvas id="c"></canvas></div>
+  <aside>
+    <h3>Что нашлось</h3>
+    <div class="row"><span>Стен</span><b id="n-walls">0</b></div>
+    <div class="row"><span>Узлов</span><b id="n-joints">0</b></div>
+    <div class="row"><span>Проёмов</span><b id="n-open">0</b></div>
+    <div class="row"><span>Комнат</span><b id="n-rooms">—</b></div>
+    <div class="row"><span>Сумма, м²</span><b id="n-area">—</b></div>
+    <div class="row"><span>Разрывов</span><b id="n-gaps">—</b></div>
+    <div id="room-list" class="muted" style="margin-top:6px;line-height:1.6"></div>
+    <div class="row"><span>Источник</span><b id="n-src">—</b></div>
+    <h3 style="margin-top:16px">Стена</h3>
+    <div id="wall-panel" style="display:none">
+      <div class="seg" id="wtype">
+        <button data-k="load">Несущая</button>
+        <button data-k="part">Перегородка</button>
+      </div>
+      <div class="row"><label for="wlen">Длина, мм</label><input id="wlen" type="number" step="10" style="width:84px"></div>
+      <div class="row"><label for="wthk">Толщина, мм</label><input id="wthk" type="number" step="10" style="width:84px"></div>
+      <div class="muted" style="font-size:11px;line-height:1.4">Шаг 100 мм. Толщины по нормам: 100, 120, 150, 200, 250, 380 мм.</div>
+    </div>
+    <div id="sel" class="muted" style="margin-top:6px">ничего</div>
+    <h3 style="margin-top:16px">Как править</h3>
+    <p class="muted" style="margin:0">Стены — осевые линии, синяя заливка — толщина. Тяни конец, чтобы сдвинуть узел. «Стена» добавляет новую: два клика. Экспорт отдаёт тот же формат, что и разбор PDF.</p>
+  </aside>
+</main>
+
+<script>
+const DATA = __DATA__;
+const SCALE = DATA.plan.scale || null;
+const MM_PER_PT = SCALE && SCALE.mm_per_pt ? SCALE.mm_per_pt : null;
+const GRID_MM = 100;                     // шаг привязки, мм
+const THICK_MM = [80, 100, 120, 150, 180, 200, 250, 300, 380, 510]; // по нормам
+
+const mmToPt = mm => (MM_PER_PT ? mm / MM_PER_PT : mm);
+const ptToMm = pt => (MM_PER_PT ? pt * MM_PER_PT : pt);
+const snapGrid = pt => (MM_PER_PT ? Math.round(pt / mmToPt(GRID_MM)) * mmToPt(GRID_MM) : pt);
+const snapThickness = mm => THICK_MM.reduce((a, b) => Math.abs(b - mm) < Math.abs(a - mm) ? b : a, THICK_MM[0]);
+const state = {
+  walls: DATA.plan.walls.map(w => ({...w, a:[...w.a], b:[...w.b]})),
+  openings: DATA.plan.openings || [],
+  rooms: [],
+  gaps: [],
+  selected: -1,
+  panning: null,
+  dragging: null,
+  adding: null,
+  history: [],
+};
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const img = new Image();
+let view = { scale: 1, ox: 0, oy: 0 };
+const SNAP_PX = 10;
+
+img.onload = () => { fit(); render(); scheduleRecalc(); };
+img.src = 'data:image/png;base64,' + DATA.page;
+document.getElementById('src').textContent = DATA.plan.source_name || DATA.plan.file.split(/[\\/]/).pop();
+if (location.protocol === 'http:' || location.protocol === 'https:') {
+  document.getElementById('again').style.display = 'inline-block';
+}
+document.getElementById('n-src').textContent = DATA.plan.classification.used;
+
+function fit() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const pw = DATA.plan.page_size.width, ph = DATA.plan.page_size.height;
+  const s = Math.min(rect.width / pw, rect.height / ph) * 0.96;
+  view = { scale: s, ox: (rect.width - pw * s) / 2, oy: (rect.height - ph * s) / 2 };
+}
+window.addEventListener('resize', () => { fit(); render(); });
+
+const toScreen = p => ({ x: view.ox + p[0] * view.scale, y: view.oy + p[1] * view.scale });
+const toPlan = (x, y) => [(x - view.ox) / view.scale, (y - view.oy) / view.scale];
+
+function render() {
+  const rect = canvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  if (img.complete) {
+    const w = DATA.plan.page_size.width * view.scale;
+    const h = DATA.plan.page_size.height * view.scale;
+    ctx.drawImage(img, view.ox, view.oy, w, h);
+  }
+  // проёмы
+  for (const o of state.openings) {
+    const a = toScreen(o.a), b = toScreen(o.b);
+    ctx.strokeStyle = '#1f7a4d'; ctx.lineWidth = 2; ctx.setLineDash([5,4]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // стены
+  state.walls.forEach((w, i) => {
+    const a = toScreen(w.a), b = toScreen(w.b);
+    const sel = i === state.selected;
+    ctx.strokeStyle = sel ? 'rgba(43,102,179,.35)' : 'rgba(43,102,179,.22)';
+    ctx.lineWidth = Math.max(2, w.thickness * view.scale);
+    ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.strokeStyle = sel ? '#b3261e' : '#2b66b3';
+    ctx.lineWidth = sel ? 2 : 1;
+    ctx.setLineDash(sel ? [] : [4,3]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.setLineDash([]);
+    for (const p of [a, b]) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, sel ? 4 : 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = sel ? '#b3261e' : '#2b66b3'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+  });
+
+  // разрывы контуров
+  for (const p of state.gaps) {
+    const s = toScreen(p);
+    ctx.beginPath(); ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+    ctx.strokeStyle = '#b3261e'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  // комнаты
+  for (const r of state.rooms) {
+    const s = toScreen(r.c);
+    ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#1f7a4d'; ctx.fill();
+    if (r.area != null) {
+      ctx.fillStyle = '#1f7a4d';
+      ctx.font = '11px Inter, system-ui, sans-serif';
+      ctx.fillText(r.area.toFixed(2) + ' м²', s.x + 8, s.y + 4);
+    }
+  }
+
+  if (state.adding) {
+    const a = toScreen(state.adding[0]);
+    ctx.strokeStyle = '#8a5a00'; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y);
+    ctx.lineTo(state.hover ? state.hover.x : a.x, state.hover ? state.hover.y : a.y);
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  document.getElementById('n-walls').textContent = state.walls.length;
+  document.getElementById('n-joints').textContent = countJoints();
+  document.getElementById('n-open').textContent = state.openings.length;
+  document.getElementById('n-rooms').textContent = state.rooms.length || '—';
+  const totalArea = state.rooms.reduce((n, r) => n + (r.area || 0), 0);
+  document.getElementById('n-area').textContent = state.rooms.length && MM_PER_PT ? totalArea.toFixed(2) : '—';
+  document.getElementById('n-gaps').textContent = state.gaps.length;
+  document.getElementById('room-list').innerHTML = state.rooms.length
+    ? state.rooms.map(r => r.area != null ? r.area.toFixed(2) + ' м²' : '—').join('<br>')
+    : (MM_PER_PT ? 'нажмите «Пересчитать комнаты»' : 'масштаб не найден');
+  updateWallPanel();
+  const sel = state.walls[state.selected];
+  document.getElementById('sel').textContent = sel
+    ? `стена ${state.selected + 1}: ${len(sel).toFixed(0)} pt, толщина ${sel.thickness} pt`
+    : 'ничего';
+}
+
+const len = w => Math.hypot(w.b[0]-w.a[0], w.b[1]-w.a[1]);
+
+function wallKind(w) {
+  if (w.kind) return w.kind;
+  const mm = w.thickness * (MM_PER_PT || 1);
+  return mm >= 180 ? 'load' : 'part';
+}
+
+function updateWallPanel() {
+  const w = state.walls[state.selected];
+  const panel = document.getElementById('wall-panel');
+  if (!panel) return;
+  panel.style.display = w ? 'block' : 'none';
+  if (!w) return;
+  const k = wallKind(w);
+  document.querySelectorAll('#wtype button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
+  const lenInput = document.getElementById('wlen');
+  const thkInput = document.getElementById('wthk');
+  if (document.activeElement !== lenInput) lenInput.value = Math.round(len(w) * (MM_PER_PT || 1));
+  if (document.activeElement !== thkInput) thkInput.value = Math.round(w.thickness * (MM_PER_PT || 1));
+}
+
+function nearestOnSeg(p, w) {
+  const [x1, y1] = w.a, [x2, y2] = w.b;
+  const dx = x2 - x1, dy = y2 - y1;
+  const t = Math.max(0, Math.min(1, ((p[0] - x1) * dx + (p[1] - y1) * dy) / (dx * dx + dy * dy || 1)));
+  return [x1 + t * dx, y1 + t * dy];
+}
+
+function openEnds() {
+  const gaps = [];
+  for (const w of state.walls) {
+    for (const key of ['a', 'b']) {
+      const p = w[key];
+      let dmin = Infinity;
+      for (const v of state.walls) {
+        if (v === w) continue;
+        const q = nearestOnSeg(p, v);
+        dmin = Math.min(dmin, Math.hypot(p[0]-q[0], p[1]-q[1]));
+      }
+      if (dmin > 8) gaps.push(p);
+    }
+  }
+  return gaps;
+}
+
+function computeRooms() {
+  const P = 2;
+  const W = Math.ceil(DATA.plan.page_size.width * P);
+  const H = Math.ceil(DATA.plan.page_size.height * P);
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d', {willReadFrequently: true});
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+  g.strokeStyle = '#000'; g.lineCap = 'butt';
+
+  for (const w of state.walls) {
+    g.lineWidth = Math.max(2, w.thickness * P);
+    g.beginPath(); g.moveTo(w.a[0]*P, w.a[1]*P); g.lineTo(w.b[0]*P, w.b[1]*P); g.stroke();
+  }
+  for (const o of state.openings) {
+    g.lineWidth = 2;
+    g.beginPath(); g.moveTo(o.a[0]*P, o.a[1]*P); g.lineTo(o.b[0]*P, o.b[1]*P); g.stroke();
+  }
+  // дотяжка концов к ближайшей стене: закрывает углы и проёмы
+  g.lineWidth = 2;
+  for (const w of state.walls) {
+    for (const key of ['a', 'b']) {
+      const p = w[key];
+      let best = null;
+      for (const v of state.walls) {
+        if (v === w) continue;
+        const q = nearestOnSeg(p, v);
+        const d = Math.hypot(p[0]-q[0], p[1]-q[1]);
+        if (d > 0.5 && d <= 120 && (!best || d < best.d)) best = {d, q};
+      }
+      if (best) {
+        g.beginPath(); g.moveTo(p[0]*P, p[1]*P); g.lineTo(best.q[0]*P, best.q[1]*P); g.stroke();
+      }
+    }
+  }
+
+  const data = g.getImageData(0, 0, W, H).data;
+  const free = i => data[i * 4] > 127;
+  const label = new Int32Array(W * H);
+  const rooms = [];
+  const stack = [];
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const start = y * W + x;
+      if (label[start] || !free(start)) continue;
+      let area = 0, sx = 0, sy = 0, edge = false;
+      stack.push(start); label[start] = 1;
+      while (stack.length) {
+        const j = stack.pop();
+        const jx = j % W, jy = (j - jx) / W;
+        area++; sx += jx; sy += jy;
+        if (jx <= 0 || jy <= 0 || jx >= W - 1 || jy >= H - 1) edge = true;
+        if (jx > 0 && !label[j-1] && free(j-1)) { label[j-1] = 1; stack.push(j-1); }
+        if (jx < W-1 && !label[j+1] && free(j+1)) { label[j+1] = 1; stack.push(j+1); }
+        if (jy > 0 && !label[j-W] && free(j-W)) { label[j-W] = 1; stack.push(j-W); }
+        if (jy < H-1 && !label[j+W] && free(j+W)) { label[j+W] = 1; stack.push(j+W); }
+      }
+      if (edge) continue;
+      const c = [sx / area / P, sy / area / P];
+      if (MM_PER_PT) {
+        const m2 = area * Math.pow(1 / P, 2) * Math.pow(MM_PER_PT / 1000, 2);
+        if (m2 >= 0.8) rooms.push({area: +m2.toFixed(2), c});
+      } else if (area > 2000) {
+        rooms.push({area: null, c});
+      }
+    }
+  }
+  rooms.sort((a, b) => (b.area || 0) - (a.area || 0));
+  return rooms;
+}
+
+let recalcTimer = null;
+function scheduleRecalc() {
+  clearTimeout(recalcTimer);
+  recalcTimer = setTimeout(recalc, 250);
+}
+function recalc() {
+  state.rooms = computeRooms();
+  state.gaps = openEnds();
+  render();
+}
+function countJoints() {
+  const pts = [];
+  for (const w of state.walls) for (const p of [w.a, w.b]) {
+    if (!pts.some(q => Math.hypot(q[0]-p[0], q[1]-p[1]) <= 6)) pts.push(p);
+  }
+  return pts.filter(p => state.walls.reduce((n,w) => n +
+    ((Math.hypot(w.a[0]-p[0], w.a[1]-p[1]) <= 6 || Math.hypot(w.b[0]-p[0], w.b[1]-p[1]) <= 6) ? 1 : 0), 0) >= 2).length;
+}
+
+function pick(px, py) {
+  // сначала концы, потом сама стена
+  for (let i = 0; i < state.walls.length; i++) {
+    for (const key of ['a', 'b']) {
+      const s = toScreen(state.walls[i][key]);
+      if (Math.hypot(s.x - px, s.y - py) <= SNAP_PX) return { i, end: key };
+    }
+  }
+  for (let i = 0; i < state.walls.length; i++) {
+    const a = toScreen(state.walls[i].a), b = toScreen(state.walls[i].b);
+    const d = distToSeg(px, py, a.x, a.y, b.x, b.y);
+    if (d <= Math.max(4, state.walls[i].thickness * view.scale / 2)) return { i, end: null };
+  }
+  return null;
+}
+
+function distToSeg(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function snapPoint(sx, sy, skipIdx, skipEnd) {
+  // ищем ближний узел в экранных координатах, возвращаем точку в координатах чертежа
+  let best = null, bestD = SNAP_PX;
+  state.walls.forEach((w, i) => {
+    for (const key of ['a', 'b']) {
+      if (i === skipIdx && key === skipEnd) continue;
+      const s = toScreen(w[key]);
+      const d = Math.hypot(s.x - sx, s.y - sy);
+      if (d < bestD) { bestD = d; best = [...w[key]]; }
+    }
+  });
+  return best || toPlan(sx, sy);
+}
+
+function push() {
+  state.history.push(JSON.stringify(state.walls));
+  if (state.history.length > 50) state.history.shift();
+}
+
+canvas.addEventListener('mousedown', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  if (e.button === 2 || e.button === 1) {
+    e.preventDefault();
+    state.panning = { x, y, ox: view.ox, oy: view.oy };
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
+  if (state.adding) {
+    const p = snapPoint(x, y, -1, null);
+    push();
+    state.walls.push({ a: [...state.adding], b: p, thickness: 12, confidence: 1, source: 'user' });
+    state.adding = null;
+    state.selected = state.walls.length - 1;
+    render();
+    scheduleRecalc();
+    return;
+  }
+  const hit = pick(x, y);
+  if (hit) {
+    state.selected = hit.i;
+    if (hit.end) {
+      push();
+      state.dragging = { i: hit.i, end: hit.end };
+    }
+    render();
+  } else {
+    state.selected = -1; render();
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  if (state.panning) {
+    view.ox = state.panning.ox + (x - state.panning.x);
+    view.oy = state.panning.oy + (y - state.panning.y);
+    render();
+    return;
+  }
+  if (!state.dragging && !state.adding) {
+    const hit = pick(x, y);
+    canvas.style.cursor = hit ? (hit.end ? 'grab' : 'pointer') : 'crosshair';
+  } else if (state.dragging) {
+    canvas.style.cursor = 'grabbing';
+  }
+  state.hover = { x, y };
+  if (state.dragging) {
+    let p = snapPoint(x, y, state.dragging.i, state.dragging.end);
+    const w = state.walls[state.dragging.i];
+    const other = w[state.dragging.end === 'a' ? 'b' : 'a'];
+    const tol = 6 / view.scale;
+    if (Math.abs(p[0] - other[0]) < tol) p = [other[0], p[1]];
+    if (Math.abs(p[1] - other[1]) < tol) p = [p[0], other[1]];
+    p = [snapGrid(p[0]), snapGrid(p[1])];
+    w[state.dragging.end] = p;
+    render();
+  } else if (state.adding) {
+    render();
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  const moved = state.dragging;
+  state.dragging = null;
+  if (state.panning) { state.panning = null; }
+  canvas.style.cursor = 'crosshair';
+  if (moved) scheduleRecalc();
+});
+
+canvas.addEventListener('dblclick', e => {
+  // двойной клик по пустому месту — быстрая стена на 3 м
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  if (!pick(x, y)) {
+    const p = toPlan(x, y);
+    push();
+    state.walls.push({ a: [...p], b: [p[0] + 300, p[1]], thickness: 12, confidence: 1, source: 'user' });
+    state.selected = state.walls.length - 1; render(); scheduleRecalc();
+  }
+});
+
+document.getElementById('del').onclick = () => {
+  if (state.selected < 0) return;
+  push();
+  state.walls.splice(state.selected, 1);
+  state.selected = -1;
+  render();
+  scheduleRecalc();
+};
+document.getElementById('undo').onclick = () => {
+  const prev = state.history.pop();
+  if (prev) { state.walls = JSON.parse(prev); state.selected = -1; render(); scheduleRecalc(); }
+};
+document.getElementById('recalc').onclick = () => recalc();
+
+// длина стены: тянем конец вдоль направления, начало неподвижно
+document.getElementById('wlen').addEventListener('change', e => {
+  const w = state.walls[state.selected];
+  const mm = parseFloat(e.target.value);
+  if (!w || !(mm > 0)) return;
+  const snapped = Math.round(mm / GRID_MM) * GRID_MM;   // длина кратно 100 мм
+  const target = mmToPt(snapped);
+  const dx = w.b[0] - w.a[0], dy = w.b[1] - w.a[1];
+  const l = Math.hypot(dx, dy) || 1;
+  push();
+  w.b = [w.a[0] + dx / l * target, w.a[1] + dy / l * target];
+  render(); scheduleRecalc();
+});
+
+// толщина: только сечение, длина и положение не меняются
+document.getElementById('wthk').addEventListener('change', e => {
+  const w = state.walls[state.selected];
+  const mm = parseFloat(e.target.value);
+  if (!w || !(mm > 0)) return;
+  push();
+  w.thickness = Math.max(2, mmToPt(snapThickness(mm)));
+  render(); scheduleRecalc();
+});
+
+// тип: меняет толщину по нормативу, но сохраняет длину и позицию
+document.querySelectorAll('#wtype button').forEach(btn => {
+  btn.onclick = () => {
+    const w = state.walls[state.selected];
+    if (!w) return;
+    push();
+    w.kind = btn.dataset.k;
+    const presetMm = btn.dataset.k === 'load' ? 250 : 100;  // норматив: несущая 250, перегородка 100
+    w.thickness = MM_PER_PT ? presetMm / MM_PER_PT : (btn.dataset.k === 'load' ? 14 : 6);
+    render(); scheduleRecalc();
+  };
+});
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const before = toPlan(x, y);
+  const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const next = Math.min(12, Math.max(0.2, view.scale * k));
+  view.scale = next;
+  view.ox = x - before[0] * next;
+  view.oy = y - before[1] * next;
+  render();
+}, { passive: false });
+
+document.getElementById('fit').onclick = () => { fit(); render(); };
+
+document.getElementById('add').onclick = () => {
+  const rect = canvas.getBoundingClientRect();
+  state.adding = toPlan(rect.width / 2, rect.height / 2);
+  state.selected = -1;
+  render();
+  document.getElementById('hint').textContent = 'клик по второму концу стены, Esc — отмена';
+};
+document.getElementById('save').onclick = () => {
+  const out = {
+    ...DATA.plan,
+    walls: state.walls.map(w => ({ a: w.a.map(v => +v.toFixed(1)), b: w.b.map(v => +v.toFixed(1)),
+                                   thickness: w.thickness, confidence: w.confidence, source: w.source,
+                                   kind: wallKind(w) })),
+    stats: { ...DATA.plan.stats, walls: state.walls.length, junctions: countJoints() },
+  };
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'plan.corrected.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { state.adding = null; render(); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && state.selected >= 0) {
+    document.getElementById('del').click();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    document.getElementById('undo').click();
+  }
+});
+
+// для проверки из браузера
+window.__viewer = { state, view, render, countJoints, recalc, computeRooms };
+</script>
+</body>
+</html>

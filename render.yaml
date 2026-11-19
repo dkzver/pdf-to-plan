@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: pdfplan
+    runtime: docker
+    plan: starter
+    dockerContext: ./tools/pdfplan
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "8791"

@@ -1,0 +1,19 @@
+# результаты разбора и временные файлы
+tools/pdfplan/out/
+tools/pdfplan/fixtures/*_plan/
+tools/pdfplan/fixtures/*.png
+tools/pdfplan/bench/cases/
+tools/pdfplan/bench/report_auto.md
+
+# скачанные референсы
+refs/
+
+# служебное окружения
+.zwork/
+.agents/
+
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+node_modules/

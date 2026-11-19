@@ -1,0 +1,74 @@
+/* Токены клона. Значения — наши; роли сняты с интерфейса-оригинала. */
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #f2f0f1;
+  --color-surface-2: #e4e2e3;
+  --color-border: #d0cdcf;
+  --color-border-input: #8e8b8e;
+  --color-text: #1c1b1c;
+  --color-text-muted: #5f5c5e;
+  --color-accent: #2b66b3;
+  --color-on-accent: #ffffff;
+  --color-accent-soft: #d9e6f5;
+  --color-danger: #b3261e;
+  --color-success: #1f7a4d;
+  --color-warning: #8a5a00;
+
+  --font-sans: Inter, 'Segoe UI', system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  --type-xs: 11px/15px;
+  --type-sm: 12px/16px;
+  --type-base: 13px/18px;
+  --type-md: 15px/22px;
+  --type-lg: 18px/26px;
+  --type-xl: 24px/30px;
+
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  --shadow-panel: 0 1px 0 rgba(28, 27, 28, .06), 0 1px 3px rgba(28, 27, 28, .10);
+  --shadow-pop: 0 8px 24px rgba(28, 27, 28, .18);
+
+  --motion-fast: 100ms;
+  --motion-base: 160ms;
+  --motion-ease: cubic-bezier(.2, .8, .2, 1);
+
+  --layout-menu-bar: 26px;
+  --layout-toolbar: 40px;
+  --layout-status-bar: 24px;
+  --layout-left-pane: 272px;
+  --layout-catalog-tile: 84px;
+  --layout-splitter: 6px;
+
+  --zwork-preview-accent: var(--color-accent);
+  --zwork-preview-font-family: var(--font-sans);
+  --zwork-preview-motion: var(--motion-base);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion-fast: 0ms; --motion-base: 0ms; }
+}
+
+/* Плотная десктопная типографика: заголовки не «прыгают», цифры в таблицах ровные. */
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+table, .tabular { font-variant-numeric: tabular-nums; }
