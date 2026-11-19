@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import uuid
@@ -23,7 +24,7 @@ sys.path.insert(0, str(HERE))
 import pipeline as P  # noqa: E402
 from make_viewer import build_viewer  # noqa: E402
 
-OUT = HERE / "out"
+OUT = Path(os.environ.get("PLAN_OUT", HERE / "out"))
 SAMPLES = HERE / "samples"
 ALLOWED = {"viewer.html", "plan.json", "page.png", "overlay.svg", "rooms.json", "check.png"}
 MAX_MB = 60

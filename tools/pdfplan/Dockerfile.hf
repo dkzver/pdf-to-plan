@@ -1,0 +1,25 @@
+# Hugging Face Spaces (Docker). Бесплатный CPU: 2 vCPU, 16 ГБ RAM.
+# Space слушает порт 7860 и работает от пользователя 1000.
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PLAN_OUT=/tmp/out \
+    HOME=/home/user
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libglib2.0-0 libgl1 fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 user
+WORKDIR /home/user/app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY --chown=user:user . .
+RUN mkdir -p /tmp/out && chown -R user:user /tmp/out
+
+USER user
+EXPOSE 7860
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
