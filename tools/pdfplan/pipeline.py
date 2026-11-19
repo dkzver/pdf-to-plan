@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import json
 import math
+import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -526,6 +527,27 @@ def layer_walls(page: fitz.Page, px_per_pt: float = 3.0) -> tuple[list[Wall], li
     return walls, openings
 
 
+def _skeleton(bw: np.ndarray) -> np.ndarray:
+    """Скелет линий. ximgproc есть только в contrib-сборке OpenCV — есть запасной путь."""
+    if os.environ.get("PLAN_NO_XIMGPROC") != "1" and hasattr(cv2, "ximgproc"):
+        try:
+            return cv2.ximgproc.thinning(bw)
+        except Exception:  # noqa: BLE001 — падаем в морфологический скелет
+            pass
+
+    img = bw.copy()
+    skel = np.zeros_like(img)
+    element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+    for _ in range(200):
+        eroded = cv2.erode(img, element)
+        opened = cv2.dilate(eroded, element)
+        skel = cv2.bitwise_or(skel, cv2.subtract(img, opened))
+        img = eroded
+        if cv2.countNonZero(img) == 0:
+            break
+    return skel
+
+
 def _walls_from_binary(bw: np.ndarray, scale: float) -> list[Wall]:
 
     # мелкие компоненты — буквы, стрелки размеров, точки
@@ -538,7 +560,7 @@ def _walls_from_binary(bw: np.ndarray, scale: float) -> list[Wall]:
         clean[labels == i] = 255
 
     dt = cv2.distanceTransform((clean > 0).astype(np.uint8), cv2.DIST_L2, 5)
-    skel = cv2.ximgproc.thinning(clean)
+    skel = _skeleton(clean)
 
     min_len = max(24, int(28 * scale / 4.17))
     segs = cv2.HoughLinesP(skel, 1, np.pi / 360, threshold=30,
